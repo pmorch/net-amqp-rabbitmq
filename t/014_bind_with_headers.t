@@ -5,6 +5,15 @@ use warnings;
 use FindBin qw/$Bin/;
 use lib "$Bin/lib";
 use NAR::Helper;
+use POSIX;
+use sigtrap qw/ALRM/;
+
+our $waiting = 1;
+
+# Failure here results in a blocking wait which will never clear.
+$SIG{ALRM} = sub {
+  die("ack!") unless !$waiting;
+};
 
 my $helper = NAR::Helper->new;
 
@@ -15,8 +24,9 @@ ok $helper->exchange_declare( { exchange_type => 'headers', auto_delete => 0 } )
 my $queue = $helper->queue_declare( { auto_delete => 0 }, undef, 1 );
 ok $queue, "queue_declare";
 
-my $headers = { foo => 'bar' };
-ok $helper->queue_bind( $queue, undef, undef, $headers ), "queue bind";
+my $headers = { foo => '😊😭' };
+my $declared_headers = {'foo' => utf8::downgrade($headers->{foo}) };
+ok $helper->queue_bind( $queue, undef, undef, $declared_headers ), "queue bind";
 ok $helper->drain( $queue ), "drain queue";
 
 # This message doesn't have the correct headers so will not be routed to the queue
@@ -25,7 +35,10 @@ ok $helper->publish( "Routable", { headers => $headers } ), "publish routable me
 
 ok $helper->consume( $queue );
 
+# Set an alarm
+POSIX::alarm(5);
 my $msg = $helper->recv;
+$waiting = 0;
 ok $msg, "recv";
 is $msg->{body}, "Routable", "Got expected message";
 

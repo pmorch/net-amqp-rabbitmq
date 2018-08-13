@@ -10,7 +10,7 @@ my $helper = NAR::Helper->new;
 if ( $helper->{ssl} ) {
     #openssl is awesome, it throws sigpipe on socket error
     # if we don't catch it the test will exit with code 141
-    $SIG{PIPE} = 'IGNORE';
+    $SIG{PIPE} = sub { print STDERR "ACK!\n"; };
 }
 
 ok $helper->connect( 1 ), "connected";
@@ -37,6 +37,7 @@ ok $helper->publish( "Magic Transient Payload", $props ), "publish";
 
 note "sleeping for 10s";
 sleep(10);
+note "done sleeping, about to publish.";
 ok !$helper->publish( "Magic Transient Payload", $props ), "publish fails";
 
 END {

@@ -1,3 +1,11 @@
+
+/**
+ * STOPPED OFF
+ I stopped off investigating why we didn't get killed when the heartbeat timed out.
+ This problem is first visible in 0.8.0.
+ */
+
+
 #include "EXTERN.h"
 #include "perl.h"
 #include "XSUB.h"
@@ -7,7 +15,7 @@
 /* perl -MDevel::PPPort -e'Devel::PPPort::WriteFile();' */
 /* perl ppport.h --compat-version=5.8.0 --cplusplus RabbitMQ.xs */
 #define NEED_newSVpvn_flags
-#include "ppport.h"
+// #include "ppport.h"
 
 /* ppport.h knows about MUTABLE_PTR and MUTABLE_SV, but not these?! */
 #ifndef MUTABLE_AV
@@ -18,6 +26,7 @@
 #endif
 
 #include "amqp.h"
+#include "amqp_socket.h"
 #include "amqp_tcp_socket.h"
 #include "amqp_ssl_socket.h"
 /* For struct timeval */
@@ -29,6 +38,8 @@
 /* perl Makefile.PL; make CCFLAGS=-DDEBUG */
 #if DEBUG
  #define __DEBUG__(X)  X
+ extern void amqp_dump(void const *buffer, size_t len);
+ extern void dump_table(amqp_table_t table);
 #else
  #define __DEBUG__(X) /* NOOP */
 #endif
@@ -113,7 +124,7 @@ SV*  mq_table_to_hashref(amqp_table_t *table);
 void die_on_error(pTHX_ int x, amqp_connection_state_t conn, char const *context) {
   /* Handle socket errors */
   if ( x == AMQP_STATUS_CONNECTION_CLOSED || x == AMQP_STATUS_SOCKET_ERROR ) {
-      amqp_socket_close( amqp_get_socket( conn ) );
+      amqp_socket_close( amqp_get_socket( conn ), 0 );
       Perl_croak(aTHX_ "%s failed because AMQP socket connection was closed.", context);
   }
   /* Handle everything else */
@@ -139,7 +150,7 @@ void die_on_amqp_error(pTHX_ amqp_rpc_reply_t x, amqp_connection_state_t conn, c
         ||
         x.library_error == AMQP_STATUS_SOCKET_ERROR
       ) {
-        amqp_socket_close( amqp_get_socket( conn ) );
+        amqp_socket_close( amqp_get_socket( conn ), 0 );
         Perl_croak(aTHX_ "%s: failed since AMQP socket connection closed.\n", context);
       }
       /* Otherwise, give a more generic croak. */
@@ -1109,7 +1120,7 @@ static amqp_rpc_reply_t basic_get(amqp_connection_state_t state, amqp_channel_t 
 
   hv_stores(envelope_hv, "props", props);
   hv_stores(envelope_hv, "body", body);
-  
+
 success_out:
   *envelope_sv_ptr = envelope_hv ? newRV_noinc(MUTABLE_SV(envelope_hv)) : &PL_sv_undef;
   ret.reply_type = AMQP_RESPONSE_NORMAL;
@@ -1697,6 +1708,9 @@ net_amqp_rabbitmq__publish(conn, channel, routing_key, body, options = NULL, pro
     int force_utf8_in_header_strings = 0;
   CODE:
     assert_amqp_connected(conn);
+    __DEBUG__(
+      warn("~~~ ABOUT TO PUBLISH!")
+    );
 
     routing_key_b = amqp_cstring_bytes(routing_key);
     body_b.bytes = SvPV(body, len);
@@ -1775,9 +1789,10 @@ net_amqp_rabbitmq__publish(conn, channel, routing_key, body, options = NULL, pro
     rv = amqp_basic_publish(conn, channel, exchange_b, routing_key_b, mandatory, immediate, &properties, body_b);
     maybe_release_buffers(conn);
 
+    __DEBUG__(warn("~~~ RETURN IS %d", rv));
     /* If the connection failed, blast the file descriptor! */
     if ( rv == AMQP_STATUS_CONNECTION_CLOSED || rv == AMQP_STATUS_SOCKET_ERROR ) {
-        amqp_socket_close( amqp_get_socket( conn ) );
+        amqp_socket_close( amqp_get_socket( conn ), 0 );
         Perl_croak(aTHX_ "Publish failed because AMQP socket connection was closed.");
     }
 
@@ -1861,7 +1876,7 @@ net_amqp_rabbitmq_disconnect(conn)
   CODE:
     if ( amqp_get_socket(conn) != NULL ) {
         amqp_connection_close(conn, AMQP_REPLY_SUCCESS);
-        amqp_socket_close( amqp_get_socket( conn ) );
+        amqp_socket_close( amqp_get_socket( conn ), 0 );
     }
 
 Net::AMQP::RabbitMQ
@@ -1888,6 +1903,12 @@ net_amqp_rabbitmq_heartbeat(conn)
   PREINIT:
   amqp_frame_t f;
   CODE:
+    __DEBUG__(
+      fprintf(stderr,
+        "~~~ HEARTBEAT!!\n"
+      )
+    );
+
     f.frame_type = AMQP_FRAME_HEARTBEAT;
     f.channel = 0;
     amqp_send_frame(conn, &f);
